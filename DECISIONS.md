@@ -1,0 +1,7 @@
+# DECISIONS.md
+
+1. **Indexes.** On `attendance_logs`: unique `(emp_code, date)` guarantees one record per person per day and serves the `emp_code` filter, the monthly summary and the per-employee lookup. `(date -1, emp_code 1)` serves the default list order and every date-range scan. `(status, date -1, emp_code 1)` serves the `status` filter with the same order. On `employees`: unique `emp_code`, plus `(department, joined_on)` and `(joined_on)` for headcount and the department filter. I rejected `(emp_code, punch_in)` for punch-out: sorting a few hundred rows of one employee in memory is cheap, and every extra index slows writes.
+2. **Punch-in race.** Both requests compute the same `(emp_code, date)` and call `insert_one` with no read first. The unique index lets one insert win (201). The other raises `DuplicateKeyError`, which I return as 409.
+3. **Ties.** Ranking is standard competition ranking (1, 2, 2, 4). `limit` is applied after ranking (`rank <= limit`), so everyone tied at the cutoff is returned. Three people tied at rank 2 with `limit=2` gives 4 rows, ordered by total descending, then `emp_code`.
+4. **Headcount.** The pipeline starts from `employees`, not from logs, then `$lookup`s each person's logs and `$unwind`s with `preserveNullAndEmptyArrays: true`. A person with no logs still gives one row, which counts in `$sum: 1`.
+5. **100x data.** I would keep a daily roll-up per (department, date), updated on each write, and read that instead of doing a `$lookup` per employee and scanning the whole month.
